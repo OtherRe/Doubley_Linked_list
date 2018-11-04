@@ -1,5 +1,6 @@
 .vscode
 bin/*
-CMakeFiles
-cmake_install.cmake
-Cmake
+test/CMakeFiles/*
+test/cmake_install.cmake
+test/CMakeCache
+.directory

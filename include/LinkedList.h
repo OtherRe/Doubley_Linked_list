@@ -13,9 +13,8 @@ class LinkedList
 {
   struct Node
   {
-    Node() : next(nullptr), prev(nullptr) {}
+    Node() = default;
     Node(const Type &elem) : elem(elem), next(nullptr), prev(nullptr){};
-    Node(const Type &elem, Node *prev, Node *next = nullptr) : elem(elem), next(next), prev(prev){};
 
     /**
      * @brief inserts itself between two other nodes, assumes that
@@ -38,6 +37,7 @@ class LinkedList
     {
       left->next = this;
       this->prev = left;
+
       right->prev = this;
       this->next = right;
     }
@@ -48,19 +48,33 @@ class LinkedList
       other->prev = this;
     }
 
-    void disconnect(){
-      if(!next)
-        throw std::out_of_range("Trying to remove static data");
-
+    /**
+     * @brief disconnects itself from two other nodes, prev and next
+     *  ->  ----  <----                          ---- 
+     *  |  |this|-     |                        |this|
+     *  |   ----  |    |                         ----
+     *  |  |      |    |
+     *  |  |      |    |        =======>
+     *  |  \/     \/   |                    -----   --->  -----
+     *  ----         -----                  |left|       |right|
+     *  |left|       |right|                -----   <---  -----
+     *  ----         -----
+     * 
+     */
+    void disconnect()
+    {
       auto left = prev, right = next;
       prev = nullptr;
       next = nullptr;
-      left->connectWith(right);
+      if (left)
+        left->connectWith(right);
+      else if (right)
+        right->connectWith(left);
     }
 
     Type elem;
-    Node *next;
-    Node *prev;
+    Node *next = nullptr;
+    Node *prev = nullptr;
   };
 
 public:
@@ -77,10 +91,10 @@ public:
   using iterator = Iterator;
   using const_iterator = ConstIterator;
 
-  LinkedList() : _head(new Node), _tail(new Node), _size(0)
+  LinkedList() :guard_(new Node), _size(0)
   {
-    _head->next = _tail;
-    _tail->prev = _head;
+    guard_->next = guard_;
+    guard_->prev = guard_;
   }
 
   LinkedList(std::initializer_list<Type> l) : LinkedList()
@@ -99,15 +113,18 @@ public:
     }
   }
 
-  LinkedList(LinkedList &&other) : _head(other._head), _tail(other._tail), _size(other._size)
+  LinkedList(LinkedList &&other) : guard_(other.guard_), _size(other._size)
   {
-    other._head = nullptr;
-    other._tail = nullptr;
+    other.guard_ = nullptr;
   }
 
   ~LinkedList()
   {
-    deleteNodesFrom(_head, nullptr);
+    if (guard_)
+    {
+      deleteNodesFrom(guard_->next, guard_);
+      delete guard_;
+    }
   }
 
   LinkedList &operator=(const LinkedList &other)
@@ -115,9 +132,9 @@ public:
     if (this == &other)
       return *this;
 
-    deleteNodesFrom(_head->next, _tail);
-    _head->connectWith(_tail);
-     _size = 0;
+    deleteNodesFrom(guard_->next, guard_);
+    guard_->connectWith(guard_);
+    _size = 0;
 
     for (const auto &item : other)
       append(item);
@@ -130,32 +147,24 @@ public:
     if (this == &other)
       return *this;
 
-    deleteNodesFrom(_head->next, _tail);
-    _head->connectWith(_tail);
+    deleteNodesFrom(guard_->next, guard_);
+    guard_->connectWith(guard_);
 
-    std::swap(_head, other._head);
-    std::swap(_tail, other._tail);
+    std::swap(guard_, other.guard_);
     _size = other._size;
 
     return *this;
   }
 
-  bool isEmpty() const
-  {
-    return _size == 0;
-  }
+  bool isEmpty() const { return _size == 0; }
+  size_type getSize() const { return _size; }
 
-  size_type getSize() const
+  Type &operator[](int pos) //to delete
   {
-    return _size;
-  }
-
-  Type &operator[](int pos)//to delete
-  {
-    if (!_head)
+    if (!guard_)
       throw std::runtime_error("Referencing deleted object");
     int i = 0;
-    for (auto it = _head->next; it && it != _tail; it = it->next, ++i)
+    for (auto it = guard_->next; it && it != guard_; it = it->next, ++i)
     {
       if (pos == i)
         return it->elem;
@@ -166,14 +175,14 @@ public:
   void append(const Type &item)
   {
     Node *newElem = new Node(item);
-    newElem->insertInBetween(_tail->prev, _tail);
+    newElem->insertInBetween(guard_->prev, guard_);
     ++_size;
   }
 
   void prepend(const Type &item)
   {
     Node *newElem = new Node(item);
-    newElem->insertInBetween(_head, _head->next);
+    newElem->insertInBetween(guard_, guard_->next);
     ++_size;
   }
 
@@ -181,13 +190,11 @@ public:
   {
     Node *newElem = new Node(item);
 
-      auto it = iterator(insertPosition);//we need to non const iterator
-      auto right = it.node();
-      auto left = right->prev;
+    auto right = iterator(insertPosition).node();
+    auto left = right->prev;
 
-      newElem->insertInBetween(left, right);
-      _size++;
-    
+    newElem->insertInBetween(left, right);
+    _size++;
   }
 
   Type popFirst()
@@ -195,15 +202,10 @@ public:
     if (_size == 0)
       throw std::out_of_range("Popped empty list");
 
-    auto elementToPop = _head->next;
-    auto returnValue = elementToPop->elem;
-    elementToPop->disconnect();
-
-    delete elementToPop;
-
+    auto value = pop(guard_->next);
     --_size;
 
-    return returnValue;
+    return value;
   }
 
   Type popLast()
@@ -211,27 +213,20 @@ public:
     if (_size == 0)
       throw std::out_of_range("Popped empty list");
 
-    auto elementToPop = _tail->prev;
-    auto returnValue = elementToPop->elem;
-
-    elementToPop->disconnect();
-
-    delete elementToPop;
-
+    auto value = pop(guard_->prev);
     --_size;
 
-    return returnValue;
+    return value;
   }
 
   void erase(const const_iterator &possition)
   {
     if (_size == 0)
-      throw std::out_of_range("Popped empty list");
+      throw std::out_of_range("Erasing empty list");
+    if (possition == end())
+      throw std::out_of_range("Erasing end iterator");
 
-    auto nodeToErase = iterator(possition).node();//we need to non const iterator
-    nodeToErase->disconnect();
-    delete nodeToErase;
-
+    pop(iterator(possition).node());
     --_size;
   }
 
@@ -246,18 +241,27 @@ public:
     _size -= deleteNodesFrom(first, last);
   }
 
-  iterator       begin()        { return Iterator(_head->next); }
-  iterator       end()          { return iterator(_tail); }
-  const_iterator cbegin() const { return ConstIterator(_head->next); }
-  const_iterator cend()   const { return const_iterator(_tail); }
-  const_iterator begin()  const { return cbegin(); }
-  const_iterator end()    const { return cend(); }
+  iterator begin() { return iterator(guard_->next, guard_); }
+  iterator end() { return iterator(guard_, guard_); }
+  const_iterator cbegin() const { return ConstIterator(guard_->next, guard_); }
+  const_iterator cend() const { return const_iterator(guard_, guard_); }
+  const_iterator begin() const { return cbegin(); }
+  const_iterator end() const { return cend(); }
 
 private:
-  Node *_head;
-  Node *_tail;
+  Node *guard_;
   size_type _size;
 
+  /**
+ * @brief this method starts from node 'fromIncluded' and deletes
+ *        every node that it encounters. Next elements are selected
+ *        by calling node->next. Stops when 'toExcluded' is encountered.
+ *        Returns number of elements deleted.
+ * 
+ * @param fromIncluded node that method starts from
+ * @param toExcluded  node that
+ * @return int Number of elements deleted
+ */
   static int deleteNodesFrom(Node *fromIncluded, Node *toExcluded)
   {
     int elementsDeleted = 0;
@@ -265,22 +269,28 @@ private:
     while (it && it != toExcluded)
     {
       auto next = it->next;
-      delete it; elementsDeleted++;
+      delete it;
+      elementsDeleted++;
       it = next;
     }
     return elementsDeleted;
   }
 
-  // Node *findNode(const_iterator position)
-  // {
-  //   auto it = _head->next;
-  //   while (it && it != _tail)
-  //   {
-  //     if (&(*position) == &(it->elem))
-  //       return it;
-  //   }
-  //   return nullptr;
-  // }
+  /**
+   * @brief deletes a node from a list and returns it value
+   * 
+   * @param nodeToPop 
+   * @return value of the deleted node
+   */
+  Type pop(Node *nodeToPop)
+  {
+    auto value = nodeToPop->elem;
+
+    nodeToPop->disconnect();
+    delete nodeToPop;
+
+    return value;
+  }
 };
 
 template <typename Type>
@@ -297,15 +307,15 @@ public:
   {
   }
 
-  explicit ConstIterator(const Node *item) : itr(item) {}
+  explicit ConstIterator(const Node *item, const Node *guard) : itr(item), guard(guard) {}
 
   ConstIterator(const ConstIterator &other) : itr(other.itr) {}
 
   reference operator*() const
   {
-    if(!itr)
+    if (!itr)
       throw std::out_of_range("Dereferencing empty list");
-    if (!(itr->next))
+    if (itr == guard)
       throw std::out_of_range("Dereferencing end pointer");
 
     return itr->elem;
@@ -313,7 +323,7 @@ public:
 
   ConstIterator &operator++()
   {
-    if (!itr || !(itr->next))
+    if (itr->next == guard->next)
       throw std::out_of_range("Incrementing end pointer");
 
     itr = itr->next;
@@ -322,7 +332,7 @@ public:
 
   ConstIterator operator++(int)
   {
-    if (!itr || !(itr->next))
+    if (itr->next == guard->next)
       throw std::out_of_range("Incrementing end pointer");
 
     auto temp = *this;
@@ -333,7 +343,7 @@ public:
 
   ConstIterator &operator--()
   {
-    if (!itr || !(itr->prev->prev))
+    if (itr->prev == guard)
       throw std::out_of_range("Decrementing end pointer");
 
     itr = itr->prev;
@@ -342,7 +352,7 @@ public:
 
   ConstIterator operator--(int)
   {
-    if (!itr || !(itr->prev->prev))
+    if (itr->prev == guard)
       throw std::out_of_range("Decrementing end pointer");
 
     auto temp = *this;
@@ -356,13 +366,13 @@ public:
     auto temp = itr;
     for (int i = 0; i < d; i++)
     {
-      if (!temp || !(temp->next))
+      if (itr->next == guard->next)
         throw std::out_of_range("Adding iterator pass the end");
 
       temp = temp->next;
     }
 
-    return ConstIterator(temp);
+    return ConstIterator(temp, guard);
   }
 
   ConstIterator operator-(difference_type d) const
@@ -370,13 +380,13 @@ public:
     auto temp = itr;
     for (int i = 0; i < d; i++)
     {
-      if (!temp || !(temp->prev->prev))
+      if (itr->prev == guard)
         throw std::out_of_range("Substracting iterator pass the begining");
 
       temp = temp->prev;
     }
 
-    return ConstIterator(temp);
+    return ConstIterator(temp, guard);
   }
 
   bool operator==(const ConstIterator &other) const
@@ -396,6 +406,7 @@ public:
 
 private:
   const Node *itr;
+  const Node *guard;
 };
 
 template <typename Type>
@@ -405,7 +416,7 @@ public:
   using pointer = typename LinkedList::pointer;
   using reference = typename LinkedList::reference;
 
-  explicit Iterator(const Node *item) : ConstIterator(item)
+  explicit Iterator(const Node *item, const Node *guard) : ConstIterator(item, guard)
   {
   }
 
